@@ -10,8 +10,9 @@
 ✅ **Formal Coq specifications** (compile successfully)  
 ✅ **3 critical security vulnerabilities identified**  
 ✅ **Reference implementations for all 3 critical issues**  
+✅ **Testable kernel patch** for critical Mach vulnerability
 ✅ **93.3% test pass rate** against formal properties  
-✅ **Static analysis passed** (cppcheck via Claude Code)  
+✅ **Static analysis passed** (cppcheck via Claude Code)
 
 ## 📊 Analysis Results
 
@@ -21,11 +22,13 @@
 | **Malicious Filesystem DOS** | ❌ Missing | ✅ **FIXED** - Bounded traversal |
 | **Resource Exhaustion Attacks** | ❌ Missing | ✅ **FIXED** - Resource accounting |
 | **Port Rights Violations** | ❌ Bug | ✅ **FIXED** - Exclusivity enforcement |
+| **Mach Kernel Port Rights** | ❌ Critical | ✅ **PATCH** - Kernel fix + tests |
 
 ### Implementations Provided
 1. **Bounded Filesystem Traversal** - Prevents DOS attacks via malicious filesystems
 2. **Resource Accounting System** - Enforces quotas and prevents resource exhaustion  
 3. **Port Rights Exclusivity Fix** - Restores Mach microkernel security model
+4. **Mach Kernel Security Patch** - Critical kernel-level fix with comprehensive testing
 
 ## 🔬 Validation Performed
 - **Coq theorems mechanically verified** - All formal properties compile
@@ -50,22 +53,22 @@
 
 ```
 hurd-security-verification/
-├── README.md                          # This file
-├── FORMAL_ANALYSIS_REPORT.pdf         # Detailed analysis report
-├── coq/                               # Formal Coq specifications
-│   ├── hurd_complete_formalization.v  # Full system model
-│   ├── hurd_critique_verification.v   # Security enhancements
-│   └── hurd_formalization.v           # Core properties
-├── reference-implementations/         # AI-generated code
-│   ├── DISCLAIMER.md                  # AI code warning
-│   ├── 01-bounded-traversal/         # DOS protection
-│   ├── 02-resource-accounting/       # Resource quotas
-│   └── 03-port-rights-fix/           # Security model fix
-├── verification-results/             # Test and analysis results
-│   ├── test-results.log             # Automated test output
-│   ├── cppcheck-analysis.txt        # Static analysis results
-│   └── property-verification.md     # Formal property mapping
-└── CONTRIBUTING.md                   # How to build on this work
+├── README.md                               # Project overview
+├── COMPREHENSIVE_ANALYSIS_REPORT.md       # Complete technical analysis
+├── GNU_Hurd_Security_Report.pdf           # Professional PDF report
+├── coq/                                   # Formal Coq specifications
+│   ├── hurd_complete_formalization.v      # Full system model
+│   ├── hurd_critique_verification.v       # Security enhancements
+│   └── hurd_formalization.v               # Core properties
+├── reference-implementations/             # AI-generated security fixes
+│   ├── 01-bounded-traversal/             # DOS protection
+│   ├── 02-resource-accounting/           # Resource quotas
+│   └── 03-port-rights-fix/               # Port rights security
+├── kernel-patches/                        # Kernel-level fixes (NEW)
+│   ├── mach-port-rights-fix.patch        # Critical kernel patch
+│   └── test-kernel-patch.c               # Testing framework
+├── verification-results/                 # Test and analysis results
+└── mach_security_patterns.cocci          # Static analysis patterns
 ```
 
 ## 🚀 Quick Start
@@ -85,6 +88,12 @@ make
 ### Test Reference Implementations
 ```bash
 cd reference-implementations/01-bounded-traversal/
+make test
+```
+
+### Test Kernel Patch (NEW)
+```bash
+cd kernel-patches/
 make test
 ```
 
