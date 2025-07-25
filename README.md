@@ -22,7 +22,7 @@
 | **Malicious Filesystem DOS** | ❌ Missing | ✅ **FIXED** - Bounded traversal |
 | **Resource Exhaustion Attacks** | ❌ Missing | ✅ **FIXED** - Resource accounting |
 | **Port Rights Violations** | ❌ Bug | ✅ **FIXED** - Exclusivity enforcement |
-| **Mach Kernel Port Rights** | ❌ Critical | ✅ **PATCH** - Kernel fix + tests |
+| **Mach Kernel Port Rights** | ❌ Critical | ⚠️ untested patch |
 
 ### Implementations Provided
 1. **Bounded Filesystem Traversal** - Prevents DOS attacks via malicious filesystems
