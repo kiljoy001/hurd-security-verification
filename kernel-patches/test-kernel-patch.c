@@ -20,6 +20,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#define _GNU_SOURCE
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
@@ -30,9 +31,13 @@
 
 /* Mach port interface simulation for testing
  * In real kernel testing, these would use actual Mach system calls */
+#ifdef SIMULATION_MODE
+#include "mach_stubs.h"
+#else
 #include <mach/mach.h>
 #include <mach/port.h>
 #include <mach/task.h>
+#endif
 
 /* Test result tracking */
 struct test_results {
@@ -218,15 +223,17 @@ static void test_rights_transfer(void)
  * Tests exclusivity under concurrent access patterns
  * 
  * FORMAL BASIS: Tests system behavior under high contention
+ * CORRECTED: Test now properly verifies that only one thread can hold receive rights at a time
  */
 #define NUM_THREADS 8
-#define ATTEMPTS_PER_THREAD 100
+#define HOLD_TIME_USEC 1000  /* Hold rights for 1ms to create contention */
 
 struct thread_test_data {
     mach_port_t target_port;
     int thread_id;
     int successful_allocations;
     int prevented_violations;
+    int still_holding;  /* Track if thread still has rights */
 };
 
 static void* thread_test_worker(void* arg)
@@ -234,22 +241,23 @@ static void* thread_test_worker(void* arg)
     struct thread_test_data* data = (struct thread_test_data*)arg;
     task_t task_self = mach_task_self();
     
-    for (int i = 0; i < ATTEMPTS_PER_THREAD; i++) {
-        /* Try to get receive rights to the target port */
-        kern_return_t kr = mach_port_allocate_name(task_self, 
-                                                  MACH_PORT_RIGHT_RECEIVE, 
-                                                  data->target_port);
+    /* Each thread tries to get and hold receive rights */
+    kern_return_t kr = mach_port_allocate_name(task_self, 
+                                              MACH_PORT_RIGHT_RECEIVE, 
+                                              data->target_port);
+    
+    if (kr == KERN_SUCCESS) {
+        data->successful_allocations++;
+        data->still_holding = 1;
         
-        if (kr == KERN_SUCCESS) {
-            data->successful_allocations++;
-            /* If we got it, immediately release it */
-            mach_port_deallocate(task_self, data->target_port);
-        } else {
-            data->prevented_violations++;
-        }
+        /* Hold the rights for a bit to create contention */
+        usleep(HOLD_TIME_USEC);
         
-        /* Small delay to allow other threads to run */
-        usleep(1);
+        /* Release the rights */
+        mach_port_deallocate(task_self, data->target_port);
+        data->still_holding = 0;
+    } else {
+        data->prevented_violations++;
     }
     
     return NULL;
@@ -279,6 +287,7 @@ static void test_concurrent_exclusivity(void)
         thread_data[i].thread_id = i;
         thread_data[i].successful_allocations = 0;
         thread_data[i].prevented_violations = 0;
+        thread_data[i].still_holding = 0;
         
         pthread_create(&threads[i], NULL, thread_test_worker, &thread_data[i]);
     }
@@ -300,9 +309,11 @@ static void test_concurrent_exclusivity(void)
     printf("Concurrent test results: %d successes, %d preventions\n", 
            total_successes, total_preventions);
     
-    /* In a working system, we should see mostly preventions with occasional successes */
-    TEST_ASSERT(total_preventions > total_successes * 2, 
-        "Security fix should prevent most concurrent violations");
+    /* CORRECTED TEST: Exactly one thread should succeed, all others should be prevented */
+    TEST_ASSERT(total_successes == 1, 
+        "Exactly one thread should get receive rights");
+    TEST_ASSERT(total_preventions == NUM_THREADS - 1, 
+        "All other threads should be prevented from getting receive rights");
 }
 
 /*
@@ -350,9 +361,9 @@ int main(int argc, char* argv[])
     test_formal_properties();
     
     /* Print results summary */
-    printf("\n" "=" * 50 "\n");
+    printf("\n==================================================\n");
     printf("📊 TEST RESULTS SUMMARY\n");
-    printf("=" * 50 "\n");
+    printf("==================================================\n");
     printf("Total Tests:              %d\n", results.total_tests);
     printf("Passed:                   %d\n", results.passed_tests);
     printf("Failed:                   %d\n", results.failed_tests);

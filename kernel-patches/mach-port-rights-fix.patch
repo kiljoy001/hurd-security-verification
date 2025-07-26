@@ -92,6 +92,9 @@
 + * For testing and runtime verification */
 +extern boolean_t ipc_right_verify_receive_exclusive_invariant(void);
 +
++/* Remove receive rights record when port is deallocated */
++extern void port_remove_receive_rights(ipc_port_t port);
++
 +#endif /* _IPC_RIGHT_SECURITY_H_ */
 --- /dev/null	2025-01-01 00:00:00.000000000 +0000
 +++ b/gnumach/ipc/ipc_right_security.c	2025-01-01 00:00:00.000000000 +0000
@@ -136,6 +139,18 @@
 +} ipc_security_stats = {0, 0, 0, 0};
 +
 +/*
++ * Port receive rights tracking structure
++ * Maps port IDs to tasks that hold receive rights
++ */
++struct port_receive_rights_entry {
++    ipc_port_t port;
++    task_t owner_task;
++    struct port_receive_rights_entry *next;
++};
++
++static struct port_receive_rights_entry *port_receive_rights_table = NULL;
++
++/*
 + * Check if another task already holds receive rights to this port
 + * Implements the core security check from formal verification
 + * 
@@ -146,40 +161,76 @@
 +static boolean_t
 +port_has_other_receive_rights(ipc_port_t port, task_t requesting_task)
 +{
-+    ipc_space_t space;
-+    ipc_entry_t entry;
-+    mach_port_index_t index;
-+    mach_port_gen_t gen;
++    struct port_receive_rights_entry *entry;
++    boolean_t has_other_rights = FALSE;
 +    
 +    assert(IP_VALID(port));
 +    assert(requesting_task != TASK_NULL);
 +    
-+    /* 
-+     * Search through all tasks in the system to see if any other task
-+     * currently holds receive rights to this port
-+     * 
-+     * NOTE: This is a simplified implementation. A production version
-+     * should use more efficient data structures and locking mechanisms.
-+     */
-+    
 +    /* Check if port already has receive rights granted to different task */
 +    ip_lock(port);
 +    
-+    /* If port has no receive rights holder, it's safe */
-+    if (!port->ip_receiver_name) {
-+        ip_unlock(port);
-+        return FALSE;
++    /* Search the receive rights table for this port */
++    for (entry = port_receive_rights_table; entry != NULL; entry = entry->next) {
++        if (entry->port == port) {
++            /* Found entry for this port */
++            if (entry->owner_task != requesting_task) {
++                /* Different task holds receive rights - violation detected */
++                has_other_rights = TRUE;
++            }
++            break;
++        }
 +    }
 +    
-+    /* If requesting task already holds receive rights, allow */
-+    if (port->ip_receiver == requesting_task->itk_space) {
-+        ip_unlock(port);
-+        return FALSE;
-+    }
-+    
-+    /* Different task holds receive rights - violation detected */
 +    ip_unlock(port);
-+    return TRUE;
++    return has_other_rights;
++}
++
++/*
++ * Record that a task now holds receive rights to a port
++ */
++static void
++port_record_receive_rights(ipc_port_t port, task_t owner_task)
++{
++    struct port_receive_rights_entry *entry, *new_entry;
++    
++    /* First check if entry already exists */
++    for (entry = port_receive_rights_table; entry != NULL; entry = entry->next) {
++        if (entry->port == port) {
++            entry->owner_task = owner_task;
++            return;
++        }
++    }
++    
++    /* Create new entry */
++    new_entry = kalloc(sizeof(struct port_receive_rights_entry));
++    if (new_entry) {
++        new_entry->port = port;
++        new_entry->owner_task = owner_task;
++        new_entry->next = port_receive_rights_table;
++        port_receive_rights_table = new_entry;
++    }
++}
++
++/*
++ * Remove receive rights record when port is deallocated
++ */
++static void
++port_remove_receive_rights(ipc_port_t port)
++{
++    struct port_receive_rights_entry *entry, *prev = NULL;
++    
++    for (entry = port_receive_rights_table; entry != NULL; prev = entry, entry = entry->next) {
++        if (entry->port == port) {
++            if (prev) {
++                prev->next = entry->next;
++            } else {
++                port_receive_rights_table = entry->next;
++            }
++            kfree(entry, sizeof(struct port_receive_rights_entry));
++            break;
++        }
++    }
 +}
 +
 +/*
@@ -226,7 +277,8 @@
 +        return KERN_RIGHT_EXISTS;  /* Indicate rights already exist elsewhere */
 +    }
 +    
-+    /* Security check passed - safe to grant receive rights */
++    /* Security check passed - record the grant and allow it */
++    port_record_receive_rights(port, requesting_task);
 +    ipc_security_stats.receive_rights_grants++;
 +    return KERN_SUCCESS;
 +}
@@ -300,3 +352,24 @@
  	ipc_space.c \
  	ipc_splay.c \
  	ipc_table.c \
++--- a/gnumach/ipc/ipc_port.c.orig	2025-01-01 00:00:00.000000000 +0000
+++++ b/gnumach/ipc/ipc_port.c	2025-01-01 00:00:00.000000000 +0000
++@@ -47,6 +47,7 @@
++ #include <ipc/ipc_space.h>
++ #include <ipc/ipc_port.h>
++ #include <ipc/ipc_pset.h>
+++#include <ipc/ipc_right_security.h>
++ 
++ /*
++  *	Routine:	ipc_port_dnrequests_grow
++@@ -890,6 +891,10 @@
++ 		assert(port->ip_mscount == 0);
++ 		assert(port->ip_seqno == 0);
++ 
+++		/* SECURITY FIX: Remove from receive rights tracking table */
+++		extern void port_remove_receive_rights(ipc_port_t port);
+++		port_remove_receive_rights(port);
+++
++ 		ipc_port_track(port, it_port_releases);
++ 		zfree(ipc_port_zone, (vm_offset_t) port);
++ 		break;

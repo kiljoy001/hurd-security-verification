@@ -181,7 +181,8 @@ secure_traversal_complete(struct traversal_context *ctx,
   
   pthread_mutex_unlock(&node->lock);
   
-  return ctx->last_error;
+  /* Return 0 on successful completion */
+  return 0;
 }
 
 /* Check resource bounds - implements bounded_resource_consumption */
@@ -224,7 +225,7 @@ secure_create_resource_bounds(size_t max_memory,
   bounds->max_time = max_time;
   bounds->allocated_memory = 0;
   bounds->performed_operations = 0;
-  bounds->start_time = 0;
+  bounds->start_time = time(NULL);  /* Initialize to current time */
   
   return bounds;
 }
