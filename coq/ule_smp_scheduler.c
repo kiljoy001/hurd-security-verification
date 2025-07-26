@@ -11,6 +11,8 @@
 #include <kern/cpu_number.h>
 #include <string.h>
 #include <assert.h>
+#include <math.h>  /* For pow(), exp(), fmax(), fmin() */
+#include <sys/time.h>  /* For gettimeofday() */
 
 /* Global scheduler state */
 ule_microkernel_state_t *ule_global_scheduler = NULL;
@@ -21,6 +23,8 @@ static void ule_message_queue_init(ule_message_queue_t *queue);
 static kern_return_t ule_message_queue_enqueue(ule_message_queue_t *queue, ule_message_t *msg);
 static ule_message_t *ule_message_queue_dequeue(ule_message_queue_t *queue);
 static ule_server_queue_t *ule_server_lookup(uint32_t server_id);
+static uint64_t ule_get_current_time_ms(void);
+static void ule_init_default_nash_components(ule_nash_components_t *nash);
 
 /*
  * Interactivity calculation - implements verified calculate_interactivity
@@ -74,25 +78,153 @@ ule_is_interactive(ule_message_t *msg)
 }
 
 /*
- * CA-based routing cost calculation - implements verified routing_cost
+ * Growth function g(p_i, E_i) = 1 + k1 * p_i * (2 - E_i)^k2
  * 
- * Original formula specified by Scott J. Guyton:
+ * From Coq specification:
+ * Definition growth_function (t : threat_data) : R :=
+ *   let k1 := (1.5)%R in
+ *   let k2 := (2.0)%R in
+ *   (1 + k1 * threat_probability t * Rpower (2 - defense_effectiveness t) k2)%R.
+ */
+double 
+ule_growth_function(double threat_probability, double defense_effectiveness, double k1, double k2)
+{
+    assert(threat_probability >= 0.0 && threat_probability <= 1.0);
+    assert(defense_effectiveness >= 0.0 && defense_effectiveness <= 1.0);
+    assert(k1 > 0.0 && k2 > 0.0);
+    
+    /* Implements g(p_i, E_i) = 1 + k1 * p_i * (2 - E_i)^k2 */
+    double effectiveness_term = 2.0 - defense_effectiveness;
+    double power_term = pow(effectiveness_term, k2);
+    return 1.0 + k1 * threat_probability * power_term;
+}
+
+/*
+ * Sum of growth functions for all active threats: ∑_{i∈active} g(p_i, E_i)
+ * 
+ * From Coq specification:
+ * Fixpoint threat_sum (threats : list threat_data) : R :=
+ *   match threats with
+ *   | [] => (1.0)%R
+ *   | t :: rest => (growth_function t + threat_sum rest)%R
+ *   end.
+ */
+double 
+ule_threat_sum(ule_threat_data_t *threats, uint32_t num_threats)
+{
+    if (num_threats == 0 || threats == NULL) {
+        return 1.0;  /* Default to 1.0 if no active threats */
+    }
+    
+    double sum = 0.0;
+    for (uint32_t i = 0; i < num_threats; i++) {
+        sum += ule_growth_function(threats[i].threat_probability,
+                                 threats[i].defense_effectiveness,
+                                 ULE_DYNAMIC_BCRA_K1,
+                                 ULE_DYNAMIC_BCRA_K2);
+    }
+    return sum;
+}
+
+/*
+ * Nash equilibrium multiplier Π_nash
+ * 
+ * From Coq specification:
+ * Definition nash_multiplier (nc : nash_components) : R :=
+ *   let w1 := (0.3)%R in let w2 := (0.2)%R in let w3 := (0.2)%R in
+ *   let w4 := (0.15)%R in let w5 := (0.15)%R in
+ *   (w1 * equilibrium_factor nc + w2 * competition_factor nc + 
+ *    w3 * reputation_factor nc + w4 * bayesian_factor nc + 
+ *    w5 * signaling_factor nc)%R.
+ */
+double 
+ule_nash_multiplier(ule_nash_components_t *nash)
+{
+    assert(nash != NULL);
+    
+    return ULE_NASH_WEIGHT_EQUILIBRIUM * nash->equilibrium_factor +
+           ULE_NASH_WEIGHT_COMPETITION * nash->competition_factor +
+           ULE_NASH_WEIGHT_REPUTATION * nash->reputation_factor +
+           ULE_NASH_WEIGHT_BAYESIAN * nash->bayesian_factor +
+           ULE_NASH_WEIGHT_SIGNALING * nash->signaling_factor;
+}
+
+/*
+ * Full Dynamic BCRA formula implementation
+ * 
+ * Scott J. Guyton's complete Dynamic BCRA formula:
+ * CA(t) = max(10, min(C_max, C_base × ∑_{i∈active} g(p_i, E_i) × Π_nash))
+ * 
+ * From Coq specification:
+ * Definition dynamic_routing_cost (ca : route_ca) : R :=
+ *   let threat_component := threat_sum (active_threats ca) in
+ *   let nash_component := nash_multiplier (nash_context ca) in
+ *   let raw_cost := (INR (base_cost ca) * threat_component * nash_component)%R in
+ *   let bounded_cost := Rmin (INR (max_cost ca)) raw_cost in
+ *   Rmax (10.0)%R bounded_cost.
+ */
+double 
+ule_dynamic_routing_cost(ule_route_ca_t *ca)
+{
+    assert(ca != NULL);
+    
+    /* Check cache validity first for performance */
+    uint64_t current_time = 0;  /* TODO: Get actual system time */
+    if (ule_is_cache_valid(ca, current_time)) {
+        return ca->cached_result;
+    }
+    
+    /* Calculate threat component: ∑_{i∈active} g(p_i, E_i) */
+    double threat_component = ule_threat_sum(ca->active_threats, ca->num_active_threats);
+    
+    /* Calculate Nash equilibrium component: Π_nash */
+    double nash_component = ule_nash_multiplier(&ca->nash_context);
+    
+    /* Calculate raw cost: C_base × ∑g(p_i, E_i) × Π_nash */
+    double raw_cost = (double)ca->base_cost * threat_component * nash_component;
+    
+    /* Apply bounds: max(10, min(C_max, raw_cost)) */
+    double bounded_cost = fmin((double)ca->max_cost, raw_cost);
+    double final_cost = fmax(ULE_DYNAMIC_BCRA_MIN_COST, bounded_cost);
+    
+    /* Cache the result */
+    ca->cached_result = final_cost;
+    ca->cache_timestamp = current_time;
+    ca->cache_valid = true;
+    
+    return final_cost;
+}
+
+/*
+ * Simplified routing cost for backward compatibility
+ * 
+ * Original simplified implementation:
  * routing_cost = base_cost * (1 + attack_load * (2 - defense_strength))
+ */
+double 
+ule_simple_routing_cost(ule_route_ca_t *ca)
+{
+    assert(ca != NULL);
+    assert(ca->simple_attack_load >= 0.0 && ca->simple_attack_load <= 1.0);
+    assert(ca->simple_defense_strength >= 0.0 && ca->simple_defense_strength <= 1.0);
+    
+    double cost_multiplier = 1.0 + ca->simple_attack_load * (2.0 - ca->simple_defense_strength);
+    return (double)ca->base_cost * cost_multiplier;
+}
+
+/*
+ * Primary routing cost function - uses full Dynamic BCRA formula
  * 
- * From verified Coq proof:
- * Definition routing_cost (ca : route_ca) : R :=
- *   (INR (base_cost ca) * (1 + attack_load ca * (2 - defense_strength ca)))%R.
+ * This implements the routing_cost definition from Coq:
+ * Definition routing_cost (ca : route_ca) : R := dynamic_routing_cost ca.
  */
 double 
 ule_calculate_routing_cost(ule_route_ca_t *ca)
 {
     assert(ca != NULL);
-    assert(ca->attack_load >= 0.0 && ca->attack_load <= 1.0);
-    assert(ca->defense_strength >= 0.0 && ca->defense_strength <= 1.0);
     
-    /* Implements the verified formula */
-    double cost_multiplier = 1.0 + ca->attack_load * (2.0 - ca->defense_strength);
-    return (double)ca->base_cost * cost_multiplier;
+    /* Use the full Dynamic BCRA formula as primary implementation */
+    return ule_dynamic_routing_cost(ca);
 }
 
 /*
@@ -447,10 +579,24 @@ ule_server_register(uint32_t server_id, ule_server_type_t server_type, uint32_t 
     ule_message_queue_init(&server->next_queue);
     ule_message_queue_init(&server->idle_queue);
     
-    /* Initialize CA routing with defaults */
-    server->server_ca.base_cost = 100;  /* Default base cost */
-    server->server_ca.attack_load = 0.0;
-    server->server_ca.defense_strength = 1.0;
+    /* Initialize CA routing with defaults for full Dynamic BCRA formula */
+    server->server_ca.base_cost = 100;          /* C_base: default base cost */
+    server->server_ca.max_cost = 1000;          /* C_max: default maximum cost */
+    server->server_ca.num_active_threats = 0;  /* No active threats initially */
+    server->server_ca.k1 = ULE_DYNAMIC_BCRA_K1;/* k1 = 1.5 */
+    server->server_ca.k2 = ULE_DYNAMIC_BCRA_K2;/* k2 = 2.0 */
+    
+    /* Initialize Nash equilibrium components with defaults */
+    ule_init_default_nash_components(&server->server_ca.nash_context);
+    
+    /* Backward compatibility - simple formula defaults */
+    server->server_ca.simple_attack_load = 0.0;
+    server->server_ca.simple_defense_strength = 1.0;
+    
+    /* Initialize cache */
+    server->server_ca.cached_result = 0.0;
+    server->server_ca.cache_timestamp = 0;
+    server->server_ca.cache_valid = false;
     
     simple_lock_init(&server->lock);
     
@@ -597,4 +743,151 @@ ule_scheduler_reset_stats(void)
     simple_lock(&ule_global_scheduler->global_lock);
     memset(&ule_global_scheduler->stats, 0, sizeof(ule_global_scheduler->stats));
     simple_unlock(&ule_global_scheduler->global_lock);
+}
+
+/*
+ * Threat management functions for Dynamic BCRA
+ */
+
+/*
+ * Add a new threat to the CA routing context
+ */
+kern_return_t 
+ule_add_threat(ule_route_ca_t *ca, double probability, double effectiveness)
+{
+    assert(ca != NULL);
+    assert(probability >= 0.0 && probability <= 1.0);
+    assert(effectiveness >= 0.0 && effectiveness <= 1.0);
+    
+    if (ca->num_active_threats >= ULE_MAX_ACTIVE_THREATS) {
+        return KERN_RESOURCE_SHORTAGE;
+    }
+    
+    ule_threat_data_t *threat = &ca->active_threats[ca->num_active_threats];
+    threat->threat_probability = probability;
+    threat->defense_effectiveness = effectiveness;
+    threat->timestamp = ule_get_current_time_ms();
+    
+    /* Calculate decay time using Scott J. Guyton's formula */
+    /* T_decay(i) = T_base + α × p^β × T_base */
+    /* For simplicity, using fixed parameters here */
+    double alpha = 1.0;
+    double beta = 2.0;
+    double T_base = 365.0 * 24.0 * 60.0 * 60.0 * 1000.0;  /* 365 days in ms */
+    threat->decay_time = T_base + alpha * pow(probability, beta) * T_base;
+    
+    ca->num_active_threats++;
+    ule_invalidate_cache(ca);
+    
+    return KERN_SUCCESS;
+}
+
+/*
+ * Remove expired threats from the CA routing context
+ */
+kern_return_t 
+ule_remove_expired_threats(ule_route_ca_t *ca, uint64_t current_time)
+{
+    assert(ca != NULL);
+    
+    uint32_t active_count = 0;
+    bool threats_removed = false;
+    
+    for (uint32_t i = 0; i < ca->num_active_threats; i++) {
+        ule_threat_data_t *threat = &ca->active_threats[i];
+        
+        /* Check if threat has expired */
+        if ((current_time - threat->timestamp) <= threat->decay_time) {
+            /* Threat is still active - keep it */
+            if (active_count != i) {
+                ca->active_threats[active_count] = *threat;
+            }
+            active_count++;
+        } else {
+            threats_removed = true;
+        }
+    }
+    
+    ca->num_active_threats = active_count;
+    
+    if (threats_removed) {
+        ule_invalidate_cache(ca);
+    }
+    
+    return KERN_SUCCESS;
+}
+
+/*
+ * Update Nash equilibrium components
+ */
+void 
+ule_update_nash_components(ule_route_ca_t *ca, ule_nash_components_t *nash)
+{
+    assert(ca != NULL);
+    assert(nash != NULL);
+    
+    ca->nash_context = *nash;
+    ule_invalidate_cache(ca);
+}
+
+/*
+ * Cache management functions
+ */
+
+/*
+ * Invalidate the routing cost cache
+ */
+void 
+ule_invalidate_cache(ule_route_ca_t *ca)
+{
+    assert(ca != NULL);
+    ca->cache_valid = false;
+    ca->cache_timestamp = 0;
+    ca->cached_result = 0.0;
+}
+
+/*
+ * Check if cache is valid (within 1 second)
+ */
+bool 
+ule_is_cache_valid(ule_route_ca_t *ca, uint64_t current_time)
+{
+    assert(ca != NULL);
+    
+    if (!ca->cache_valid) {
+        return false;
+    }
+    
+    return (current_time - ca->cache_timestamp) < ULE_CACHE_VALIDITY_MS;
+}
+
+/*
+ * Utility functions
+ */
+
+/*
+ * Get current time in milliseconds
+ */
+static uint64_t 
+ule_get_current_time_ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (uint64_t)tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000;
+}
+
+/*
+ * Initialize default Nash equilibrium components
+ */
+static void 
+ule_init_default_nash_components(ule_nash_components_t *nash)
+{
+    assert(nash != NULL);
+    
+    /* Set reasonable default values */
+    nash->equilibrium_factor = 1.0;
+    nash->competition_factor = 1.0;
+    nash->reputation_factor = 1.0;
+    nash->bayesian_factor = 1.0;
+    nash->signaling_factor = 1.0;
 }

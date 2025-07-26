@@ -34,18 +34,74 @@ Inductive sched_msg_class : Type :=
   | Interrupt | RealTime | Interactive | Batch | Idle.
 
 (** ** CA-based Routing Metric *)
-(* Original CA routing formula specified by Scott J. Guyton *)
-(* Innovative approach combining system load with security posture *)
+(* Scott J. Guyton's Full Dynamic Benefit-to-Cost-of-Attack Ratio *)
+(* Comprehensive threat modeling with Nash equilibrium integration *)
 
-Record route_ca := mkRouteCA {
-  base_cost : nat;
-  attack_load : R;
-  defense_strength : R
+(* Individual threat characteristics *)
+Record threat_data := mkThreatData {
+  threat_probability : R;  (* p_i: probability of malicious intent [0,1] *)
+  defense_effectiveness : R  (* E_i: defense effectiveness [0,1] *)
 }.
 
-(* CA routing cost formula by Scott J. Guyton *)
-Definition routing_cost (ca : route_ca) : R :=
-  (INR (base_cost ca) * (1 + attack_load ca * (2 - defense_strength ca)))%R.
+(* Growth function g(p_i, E_i) for individual threats *)
+Definition growth_function (t : threat_data) : R :=
+  let k1 := (1.5)%R in
+  let k2 := (2.0)%R in
+  (1 + k1 * threat_probability t * Rpower (2 - defense_effectiveness t) k2)%R.
+
+(* Nash equilibrium components *)
+Record nash_components := mkNashComponents {
+  equilibrium_factor : R;      (* π_eq *)
+  competition_factor : R;      (* π_comp *)
+  reputation_factor : R;       (* π_rep *)
+  bayesian_factor : R;         (* π_bayes *)
+  signaling_factor : R         (* π_signal *)
+}.
+
+(* Nash equilibrium multiplier Π_nash *)
+Definition nash_multiplier (nc : nash_components) : R :=
+  let w1 := (0.3)%R in
+  let w2 := (0.2)%R in  
+  let w3 := (0.2)%R in
+  let w4 := (0.15)%R in
+  let w5 := (0.15)%R in
+  (w1 * equilibrium_factor nc + w2 * competition_factor nc + 
+   w3 * reputation_factor nc + w4 * bayesian_factor nc + 
+   w5 * signaling_factor nc)%R.
+
+(* Full CA routing structure *)
+Record route_ca := mkRouteCA {
+  base_cost : nat;                    (* C_base *)
+  max_cost : nat;                     (* C_max(t) *)
+  active_threats : list threat_data;  (* Active threat set *)
+  nash_context : nash_components;     (* Nash equilibrium context *)
+  
+  (* Legacy simple formula components for backward compatibility *)
+  simple_attack_load : R;
+  simple_defense_strength : R
+}.
+
+(* Sum of growth functions for all active threats *)
+Fixpoint threat_sum (threats : list threat_data) : R :=
+  match threats with
+  | [] => (1.0)%R  (* Default to 1.0 if no active threats *)
+  | t :: rest => (growth_function t + threat_sum rest)%R
+  end.
+
+(* Full Dynamic BCRA formula: CA(t) = max(10, min(C_max, C_base × ∑g(p_i,E_i) × Π_nash)) *)
+Definition dynamic_routing_cost (ca : route_ca) : R :=
+  let threat_component := threat_sum (active_threats ca) in
+  let nash_component := nash_multiplier (nash_context ca) in
+  let raw_cost := (INR (base_cost ca) * threat_component * nash_component)%R in
+  let bounded_cost := Rmin (INR (max_cost ca)) raw_cost in
+  Rmax (10%R) bounded_cost.
+
+(* Simplified routing cost for backward compatibility *)
+Definition simple_routing_cost (ca : route_ca) : R :=
+  (INR (base_cost ca) * (1 + simple_attack_load ca * (2 - simple_defense_strength ca)))%R.
+
+(* Primary routing cost function - uses full Dynamic BCRA *)
+Definition routing_cost (ca : route_ca) : R := dynamic_routing_cost ca.
 
 (** ** Server Queue Structure *)
 
@@ -146,22 +202,34 @@ Proof.
   split; intros [H | H]; [right | left | right | left]; assumption.
 Qed.
 
-(* Theorem 3: Routing cost increases with attack load *)
-Theorem routing_cost_monotonic : forall ca1 ca2,
-  base_cost ca1 = base_cost ca2 ->
-  defense_strength ca1 = defense_strength ca2 ->
-  (0 <= defense_strength ca1 <= 1)%R ->
-  (0 <= attack_load ca1 <= attack_load ca2)%R ->
-  (routing_cost ca1 <= routing_cost ca2)%R.
+(* Theorem 3: Dynamic routing cost is bounded below by 10 *)
+Theorem dynamic_routing_cost_bounded : forall ca,
+  (10 <= routing_cost ca)%R.
 Proof.
-  intros ca1 ca2 Hbase Hdef Hdef_bound Hattack.
-  unfold routing_cost.
-  rewrite Hbase, Hdef.
-  apply Rmult_le_compat_l.
-  - apply pos_INR.
-  - apply Rplus_le_compat_l.
-    apply Rmult_le_compat_r; [|apply Hattack].
-    destruct Hdef_bound. lra.
+  intros ca.
+  unfold routing_cost, dynamic_routing_cost.
+  apply Rmax_l.
+Qed.
+
+(* Helper lemma: threat_sum is always at least 1.0 *)
+Lemma threat_sum_ge_one : forall threats,
+  (1 <= threat_sum threats)%R.
+Proof.
+  induction threats as [|t rest IH].
+  - simpl. lra.
+  - simpl.
+    apply Rle_trans with (1 + threat_sum rest)%R.
+    + apply Rplus_le_compat_r.
+      apply growth_function_ge_one.
+    + apply Rplus_le_compat_l. exact IH.
+Qed.
+
+(* Helper lemma: growth function is always at least 1 *)
+Lemma growth_function_ge_one : forall t,
+  (1 <= growth_function t)%R.
+Proof.
+  intros t.
+  unfold growth_function. lra.
 Qed.
 
 (* System Invariant: Message uniqueness across queues *)

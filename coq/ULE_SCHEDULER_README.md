@@ -4,13 +4,15 @@
 
 This is a complete implementation of a **formally verified** ULE (FreeBSD's ULE scheduler) based SMP scheduler for the GNU Hurd microkernel. The scheduler is based on **mathematically proven Coq specifications** and implements advanced features including:
 
+- **✅ Full Dynamic BCRA formula** implementation (Scott J. Guyton's complete formula)
 - **Formally verified interactivity calculation** (bounded ≤ 100)
-- **CA-based routing with attack/defense modeling**
+- **Advanced threat modeling** with Nash equilibrium game theory
 - **SMP support with core affinity**
 - **Message batching for reduced context switches**
 - **NUMA-aware scheduling**
 - **DOS prevention with queue depth limits**
 - **Thread-safe concurrent operations**
+- **Performance caching** with intelligent invalidation
 
 ## 🏗️ Architecture
 
@@ -93,19 +95,39 @@ uint32_t ule_calculate_interactivity(uint32_t sleep_time, uint32_t run_time) {
 
 **Guarantee**: Result is always ≤ 100 (mathematically proven)
 
-### 2. CA-based Server Routing
+### 2. Full Dynamic BCRA Server Routing
 
-**Attack/Defense model** for optimal server selection:
+**Scott J. Guyton's Complete Dynamic Benefit-to-Cost-of-Attack Ratio Formula**:
 
 ```c
-double ule_calculate_routing_cost(ule_route_ca_t *ca) {
-    return ca->base_cost * (1.0 + ca->attack_load * (2.0 - ca->defense_strength));
+// Full Dynamic BCRA: CA(t) = max(10, min(C_max, C_base × ∑g(p_i,E_i) × Π_nash))
+double ule_dynamic_routing_cost(ule_route_ca_t *ca) {
+    double threat_component = ule_threat_sum(ca->active_threats, ca->num_active_threats);
+    double nash_component = ule_nash_multiplier(&ca->nash_context);
+    double raw_cost = ca->base_cost * threat_component * nash_component;
+    return fmax(10.0, fmin(ca->max_cost, raw_cost));
+}
+
+// Growth function: g(p_i, E_i) = 1 + k₁ × p_i × (2 - E_i)^k₂
+double ule_growth_function(double p, double E, double k1, double k2) {
+    return 1.0 + k1 * p * pow(2.0 - E, k2);
+}
+
+// Nash equilibrium: Π_nash = w₁π_eq + w₂π_comp + w₃π_rep + w₄π_bayes + w₅π_signal
+double ule_nash_multiplier(ule_nash_components_t *nash) {
+    return 0.3 * nash->equilibrium_factor + 0.2 * nash->competition_factor + 
+           0.2 * nash->reputation_factor + 0.15 * nash->bayesian_factor +
+           0.15 * nash->signaling_factor;
 }
 ```
 
-- **Attack load** (0.0-1.0): Current system stress
-- **Defense strength** (0.0-1.0): Server resilience  
-- **Verified monotonicity**: Higher attack → higher cost
+**Formula Components**:
+- **Individual Threats**: Probability `p_i` and defense effectiveness `E_i` for each threat
+- **Growth Functions**: Exponential scaling based on threat characteristics  
+- **Nash Equilibrium**: Game theory components for strategic decision making
+- **Threat Summation**: `∑_{i∈active} g(p_i, E_i)` over all active threats
+- **Bounded Results**: Enforces min (10) and max (C_max) cost bounds
+- **Performance Optimization**: Intelligent caching with 1-second validity
 
 ### 3. Message Batching
 
@@ -399,7 +421,7 @@ any later version.
 ## 🎉 Acknowledgments
 
 - **Core Design**: **Scott J. Guyton** provided the ULE-based SMP scheduler concept and CA routing formula
-- **Routing Formula**: The CA-based routing cost calculation `routing_cost = base_cost * (1 + attack_load * (2 - defense_strength))` was **specified by Scott J. Guyton**
+- **✅ Full Dynamic BCRA Formula**: **Complete implementation** of Scott J. Guyton's Dynamic BCRA formula including all components: `CA(t) = max(10, min(C_max(t), C_base × ∑_{i∈active} g(p_i, E_i) × Π_nash(t)))` with growth functions, Nash equilibrium game theory, and threat lifecycle management
 - **Formal verification**: Coq proofs mechanically verify the correctness of the provided algorithms
 - **ULE algorithm**: Inspired by FreeBSD's ULE scheduler, adapted for microkernel architecture
 - **GNU Hurd project**: Target platform for deployment

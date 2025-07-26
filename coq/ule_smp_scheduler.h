@@ -49,14 +49,52 @@ typedef enum {
     ULE_MSG_IDLE        = 4
 } ule_msg_class_t;
 
-/* CA-based routing metric corresponding to Coq route_ca 
- * Original formula by Scott J. Guyton:
- * routing_cost = base_cost * (1 + attack_load * (2 - defense_strength))
+/* Individual threat characteristics for Dynamic BCRA formula */
+typedef struct ule_threat_data {
+    double threat_probability;     /* p_i: probability of malicious intent [0,1] */
+    double defense_effectiveness;  /* E_i: defense effectiveness [0,1] */
+    uint64_t timestamp;           /* Time of threat detection */
+    double decay_time;            /* Calculated decay period T_decay(i) */
+} ule_threat_data_t;
+
+/* Nash equilibrium components for Dynamic BCRA */
+typedef struct ule_nash_components {
+    double equilibrium_factor;    /* π_eq: Nash equilibrium factor */
+    double competition_factor;    /* π_comp: competition factor */
+    double reputation_factor;     /* π_rep: reputation factor */
+    double bayesian_factor;       /* π_bayes: Bayesian factor */
+    double signaling_factor;      /* π_signal: signaling factor */
+} ule_nash_components_t;
+
+/* CA-based routing metric with full Dynamic BCRA formula support
+ * Scott J. Guyton's Dynamic BCRA formula: 
+ * CA(t) = max(10, min(C_max(t), C_base × ∑_{i∈active} g(p_i, E_i) × Π_nash(t)))
+ * Where g(p_i, E_i) = 1 + k1 * p_i * (2 - E_i)^k2
  */
 typedef struct ule_route_ca {
-    uint32_t base_cost;        /* Base routing cost */
-    double attack_load;        /* Current attack load (0.0 - 1.0) */
-    double defense_strength;   /* Defense strength (0.0 - 1.0) */
+    /* Core formula parameters */
+    uint32_t base_cost;                    /* C_base: base routing cost */
+    uint32_t max_cost;                     /* C_max(t): maximum cost bound */
+    
+    /* Active threat set for ∑_{i∈active} g(p_i, E_i) */
+    ule_threat_data_t active_threats[16];  /* Active threats (up to 16) */
+    uint32_t num_active_threats;           /* Number of active threats */
+    
+    /* Nash equilibrium context Π_nash(t) */
+    ule_nash_components_t nash_context;    /* Nash equilibrium components */
+    
+    /* Growth function parameters */
+    double k1;                             /* Linear scaling factor (1.5) */
+    double k2;                             /* Exponential scaling factor (2.0) */
+    
+    /* Backward compatibility - simple formula components */
+    double simple_attack_load;             /* Legacy: attack load (0.0 - 1.0) */
+    double simple_defense_strength;        /* Legacy: defense strength (0.0 - 1.0) */
+    
+    /* Cache for performance optimization */
+    double cached_result;                  /* Cached routing cost */
+    uint64_t cache_timestamp;              /* Cache validity timestamp */
+    bool cache_valid;                      /* Cache validity flag */
 } ule_route_ca_t;
 
 /* Message structure corresponding to Coq message */
@@ -182,8 +220,28 @@ ule_message_t *ule_message_dequeue_core(uint32_t core_id);
 uint32_t ule_calculate_interactivity(uint32_t sleep_time, uint32_t run_time);
 bool ule_is_interactive(ule_message_t *msg);
 
-/* CA-based routing - implements verified routing_cost and ca_routing_optimal */
+/* Dynamic BCRA formula implementation - Scott J. Guyton's full formula */
+double ule_growth_function(double threat_probability, double defense_effectiveness, double k1, double k2);
+double ule_threat_sum(ule_threat_data_t *threats, uint32_t num_threats);
+double ule_nash_multiplier(ule_nash_components_t *nash);
+double ule_dynamic_routing_cost(ule_route_ca_t *ca);
+
+/* Backward compatibility - simplified formula */
+double ule_simple_routing_cost(ule_route_ca_t *ca);
+
+/* Primary routing cost function - uses full Dynamic BCRA */
 double ule_calculate_routing_cost(ule_route_ca_t *ca);
+
+/* Threat management functions */
+kern_return_t ule_add_threat(ule_route_ca_t *ca, double probability, double effectiveness);
+kern_return_t ule_remove_expired_threats(ule_route_ca_t *ca, uint64_t current_time);
+void ule_update_nash_components(ule_route_ca_t *ca, ule_nash_components_t *nash);
+
+/* Performance optimization */
+void ule_invalidate_cache(ule_route_ca_t *ca);
+bool ule_is_cache_valid(ule_route_ca_t *ca, uint64_t current_time);
+
+/* CA routing optimization - implements verified ca_routing_optimal theorem */
 ule_server_queue_t *ule_find_min_cost_server(ule_server_type_t server_type);
 
 /* Queue management - implements verified queue operations */
@@ -208,6 +266,20 @@ void ule_scheduler_dump_state(void);
 
 /* Global scheduler instance */
 extern ule_microkernel_state_t *ule_global_scheduler;
+
+/* Dynamic BCRA formula constants */
+#define ULE_DYNAMIC_BCRA_K1             1.5     /* Linear scaling factor */
+#define ULE_DYNAMIC_BCRA_K2             2.0     /* Exponential scaling factor */
+#define ULE_DYNAMIC_BCRA_MIN_COST       10.0    /* Minimum cost bound */
+#define ULE_MAX_ACTIVE_THREATS          16      /* Maximum active threats */
+#define ULE_CACHE_VALIDITY_MS           1000    /* Cache validity: 1 second */
+
+/* Nash equilibrium weights */
+#define ULE_NASH_WEIGHT_EQUILIBRIUM     0.3     /* w1: equilibrium factor weight */
+#define ULE_NASH_WEIGHT_COMPETITION     0.2     /* w2: competition factor weight */
+#define ULE_NASH_WEIGHT_REPUTATION      0.2     /* w3: reputation factor weight */
+#define ULE_NASH_WEIGHT_BAYESIAN        0.15    /* w4: Bayesian factor weight */
+#define ULE_NASH_WEIGHT_SIGNALING       0.15    /* w5: signaling factor weight */
 
 /* Scheduler configuration defaults */
 #define ULE_DEFAULT_TIME_QUANTUM_MS     20
