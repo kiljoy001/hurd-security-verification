@@ -1,0 +1,63 @@
+# Compiled files
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+*.out
+
+# Test binaries
+test-*
+!test-*.c
+!test-*.h
+
+# LaTeX auxiliary files
+*.aux
+*.log
+*.toc
+*.out
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.dvi
+*.bbl
+*.blg
+
+# Coq generated files
+*.vo
+*.glob
+*.v.d
+.coqdeps.d
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build directories
+build/
+_build/
+obj/
+bin/
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Core dumps
+core
+core.*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# ULE scheduler specific
+ule_scheduler_test
+ule_benchmark
+libule_scheduler.a
