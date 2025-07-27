@@ -68,7 +68,7 @@ typedef struct ule_nash_components {
 
 /* CA-based routing metric with full Dynamic BCRA formula support
  * Scott J. Guyton's Dynamic BCRA formula: 
- * CA(t) = max(10, min(C_max(t), C_base × ∑_{i∈active} g(p_i, E_i) × Π_nash(t)))
+ * CA(t) = min(C_max(t), C_base × exp(∏_{i∈active} g(p_i, E_i)) × Π_nash(t))
  * Where g(p_i, E_i) = 1 + k1 * p_i * (2 - E_i)^k2
  */
 typedef struct ule_route_ca {
@@ -76,7 +76,7 @@ typedef struct ule_route_ca {
     uint32_t base_cost;                    /* C_base: base routing cost */
     uint32_t max_cost;                     /* C_max(t): maximum cost bound */
     
-    /* Active threat set for ∑_{i∈active} g(p_i, E_i) */
+    /* Active threat set for ∏_{i∈active} g(p_i, E_i) */
     ule_threat_data_t active_threats[16];  /* Active threats (up to 16) */
     uint32_t num_active_threats;           /* Number of active threats */
     
@@ -222,7 +222,7 @@ bool ule_is_interactive(ule_message_t *msg);
 
 /* Dynamic BCRA formula implementation - Scott J. Guyton's full formula */
 double ule_growth_function(double threat_probability, double defense_effectiveness, double k1, double k2);
-double ule_threat_sum(ule_threat_data_t *threats, uint32_t num_threats);
+double ule_threat_product(ule_threat_data_t *threats, uint32_t num_threats);
 double ule_nash_multiplier(ule_nash_components_t *nash);
 double ule_dynamic_routing_cost(ule_route_ca_t *ca);
 

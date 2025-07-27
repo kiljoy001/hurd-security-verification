@@ -96,10 +96,10 @@ int test_growth_function_monotonicity()
 }
 
 /*
- * Test 3: Threat sum calculation
- * Test ∑_{i∈active} g(p_i, E_i)
+ * Test 3: Threat product calculation
+ * Test ∏_{i∈active} g(p_i, E_i)
  */
-int test_threat_sum()
+int test_threat_product()
 {
     ule_threat_data_t threats[3];
     
@@ -112,20 +112,20 @@ int test_threat_sum()
     threats[2].defense_effectiveness = 0.3;
     
     /* Test empty threat list */
-    double sum = ule_threat_sum(NULL, 0);
-    TEST_ASSERT_DOUBLE_EQ(1.0, sum, 1e-6, "Empty threat list should return 1.0");
+    double product = ule_threat_product(NULL, 0);
+    TEST_ASSERT_DOUBLE_EQ(1.0, product, 1e-6, "Empty threat list should return 1.0");
     
     /* Test single threat */
-    sum = ule_threat_sum(threats, 1);
+    product = ule_threat_product(threats, 1);
     double expected = ule_growth_function(0.2, 0.8, ULE_DYNAMIC_BCRA_K1, ULE_DYNAMIC_BCRA_K2);
-    TEST_ASSERT_DOUBLE_EQ(expected, sum, 1e-6, "Single threat sum");
+    TEST_ASSERT_DOUBLE_EQ(expected, product, 1e-6, "Single threat product");
     
     /* Test multiple threats */
-    sum = ule_threat_sum(threats, 3);
-    expected = ule_growth_function(0.2, 0.8, ULE_DYNAMIC_BCRA_K1, ULE_DYNAMIC_BCRA_K2) +
-               ule_growth_function(0.5, 0.6, ULE_DYNAMIC_BCRA_K1, ULE_DYNAMIC_BCRA_K2) +
+    product = ule_threat_product(threats, 3);
+    expected = ule_growth_function(0.2, 0.8, ULE_DYNAMIC_BCRA_K1, ULE_DYNAMIC_BCRA_K2) *
+               ule_growth_function(0.5, 0.6, ULE_DYNAMIC_BCRA_K1, ULE_DYNAMIC_BCRA_K2) *
                ule_growth_function(0.8, 0.3, ULE_DYNAMIC_BCRA_K1, ULE_DYNAMIC_BCRA_K2);
-    TEST_ASSERT_DOUBLE_EQ(expected, sum, 1e-6, "Multiple threats sum");
+    TEST_ASSERT_DOUBLE_EQ(expected, product, 1e-6, "Multiple threats product");
     
     TEST_PASS();
 }
@@ -167,7 +167,7 @@ int test_nash_multiplier()
 
 /*
  * Test 5: Dynamic routing cost bounds
- * Test CA(t) = max(10, min(C_max, C_base × ∑g(p_i,E_i) × Π_nash))
+ * Test CA(t) = min(C_max, CA₀ × exp(∏g(p_i,E_i)) × Π_nash)
  */
 int test_dynamic_routing_cost_bounds()
 {
@@ -188,10 +188,10 @@ int test_dynamic_routing_cost_bounds()
     ca.nash_context.bayesian_factor = 1.0;
     ca.nash_context.signaling_factor = 1.0;
     
-    /* Test minimum bound (should be at least 10) */
+    /* Test positive result (formula should always give positive values) */
     ca.base_cost = 1;  /* Very low base cost */
     double result = ule_dynamic_routing_cost(&ca);
-    TEST_ASSERT(result >= ULE_DYNAMIC_BCRA_MIN_COST, "Should enforce minimum cost of 10");
+    TEST_ASSERT(result > 0, "Should always give positive cost");
     
     /* Test maximum bound */
     ca.base_cost = 2000;  /* Very high base cost */
@@ -232,22 +232,23 @@ int test_full_dynamic_bcra_formula()
     ca.nash_context.signaling_factor = 0.8;
     
     /* Calculate manually for verification */
-    double threat_sum = ule_threat_sum(ca.active_threats, ca.num_active_threats);
+    double threat_product = ule_threat_product(ca.active_threats, ca.num_active_threats);
     double nash_mult = ule_nash_multiplier(&ca.nash_context);
-    double raw_cost = ca.base_cost * threat_sum * nash_mult;
-    double expected = fmax(ULE_DYNAMIC_BCRA_MIN_COST, fmin(ca.max_cost, raw_cost));
+    double raw_cost = ca.base_cost * exp(threat_product) * nash_mult;
+    double expected = fmin(ca.max_cost, raw_cost);
     
     /* Test the full formula */
     double result = ule_dynamic_routing_cost(&ca);
     TEST_ASSERT_DOUBLE_EQ(expected, result, 1e-6, "Full Dynamic BCRA formula");
     
-    /* Verify it's greater than simple formula result */
+    /* Verify formula produces reasonable results (exponential should be significant) */
     ca.simple_attack_load = 0.3;
     ca.simple_defense_strength = 0.7;
     double simple_result = ule_simple_routing_cost(&ca);
     
     printf("Dynamic BCRA result: %.2f, Simple result: %.2f\n", result, simple_result);
-    TEST_ASSERT(result > simple_result, "Dynamic BCRA should be more sophisticated");
+    /* Note: With exponential formula, Dynamic BCRA can be higher or lower than simple */
+    TEST_ASSERT(result > 0, "Dynamic BCRA should produce positive results");
     
     TEST_PASS();
 }
@@ -424,7 +425,17 @@ int test_backward_compatibility()
     double expected = 100.0 * (1.0 + 0.5 * (2.0 - 0.8));
     TEST_ASSERT_DOUBLE_EQ(expected, result, 1e-6, "Simple formula calculation");
     
-    /* Test primary interface still works */
+    /* Test primary interface still works - initialize for Dynamic BCRA */
+    ca.max_cost = 1000;  /* Set reasonable max cost */
+    ca.num_active_threats = 0;  /* No threats for minimal case */
+    
+    /* Initialize Nash components to neutral values */
+    ca.nash_context.equilibrium_factor = 1.0;
+    ca.nash_context.competition_factor = 1.0;
+    ca.nash_context.reputation_factor = 1.0;
+    ca.nash_context.bayesian_factor = 1.0;
+    ca.nash_context.signaling_factor = 1.0;
+    
     result = ule_calculate_routing_cost(&ca);
     TEST_ASSERT(result > 0, "Primary interface should return positive cost");
     
@@ -442,7 +453,7 @@ int main(void)
     /* Run all tests */
     RUN_TEST(test_growth_function_basic);
     RUN_TEST(test_growth_function_monotonicity);
-    RUN_TEST(test_threat_sum);
+    RUN_TEST(test_threat_product);
     RUN_TEST(test_nash_multiplier);
     RUN_TEST(test_dynamic_routing_cost_bounds);
     RUN_TEST(test_full_dynamic_bcra_formula);

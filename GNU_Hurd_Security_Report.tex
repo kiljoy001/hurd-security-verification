@@ -428,9 +428,9 @@ Formula vs Simple Comparison & \textcolor{successgreen}{PASS} \\
 
 \textbf{Key Test Results}:
 \begin{itemize}
-    \item \textbf{Formula Verification}: Dynamic BCRA produces 521.64 cost vs 139.00 for simplified formula
-    \item \textbf{Computational Overhead}: 47.17x vs simplified version (acceptable with caching)
-    \item \textbf{Cache Performance}: 50.47x speedup achieved with 1-second cache validity
+    \item \textbf{Formula Verification}: Dynamic BCRA produces 2000.00 cost vs 139.00 for simplified formula
+    \item \textbf{Computational Overhead}: 49.49x vs simplified version (acceptable with caching)
+    \item \textbf{Cache Performance}: 47.29x speedup achieved with 1-second cache validity
     \item \textbf{Threat Management}: Successfully handles up to 16 active threats with automatic expiration
     \item \textbf{Nash Components}: All five game theory factors properly weighted and calculated
     \item \textbf{Overall Test Suite}: 100\% pass rate (10/10 tests) with comprehensive validation
@@ -460,11 +460,11 @@ Following the kernel security patches, a comprehensive \textbf{formally verified
 
 \textbf{Complete Dynamic BCRA Formula (by Scott J. Guyton):}
 \begin{lstlisting}[style=cstyle]
-/* Full Dynamic BCRA: CA(t) = max(10, min(C_max, C_base * sum(g(p_i,E_i)) * Pi_nash)) */
-double threat_component = ule_threat_sum(ca->active_threats, ca->num_active_threats);
+/* Full Dynamic BCRA: CA(t) = min(C_max, C_base * exp(prod(g(p_i,E_i))) * Pi_nash) */
+double threat_component = ule_threat_product(ca->active_threats, ca->num_active_threats);
 double nash_component = ule_nash_multiplier(&ca->nash_context);
-double raw_cost = ca->base_cost * threat_component * nash_component;
-routing_cost = fmax(10.0, fmin(ca->max_cost, raw_cost));
+double raw_cost = ca->base_cost * exp(threat_component) * nash_component;
+routing_cost = fmin(ca->max_cost, raw_cost);
 
 /* Growth function: g(p_i, E_i) = 1 + k1 * p_i * (2 - E_i)^k2 */
 double ule_growth_function(double p, double E, double k1, double k2) {
@@ -635,6 +635,6 @@ represents the future of secure system development.
 
 The ULE-based SMP scheduler implementation incorporates the \textbf{Dynamic Benefit-to-Cost-of-Attack Ratio} formula developed by \textbf{Scott J. Guyton} in his formal verification research "Adaptive Defense With Negative Benefit Extensions." This groundbreaking CA (Cybersecurity-Attack) based routing approach represents a significant advancement in adaptive defense mechanisms, transforming static defenses into mathematically proven adaptive systems that impose exponentially increasing costs on attackers while maintaining minimal friction for legitimate users.
 
-Scott J. Guyton's complete Dynamic BCRA formula has been \textbf{fully implemented}: $CA(t) = \max(10, \min(C_{\max}(t), C_{base} \times \sum_{i \in active} g(p_i, E_i) \times \Pi_{nash}(t)))$. This implementation includes all components: individual threat modeling with growth functions $g(p_i, E_i) = 1 + k_1 \times p_i \times (2 - E_i)^{k_2}$, Nash equilibrium game theory with $\Pi_{nash} = w_1\pi_{eq} + w_2\pi_{comp} + w_3\pi_{rep} + w_4\pi_{bayes} + w_5\pi_{signal}$, and comprehensive threat lifecycle management. This extends Jason Lowery's BCRA model by making the cost of attack adaptive rather than static, creating mathematically proven "Intrusion Countermeasure Equations (ICE)" that converge to make attacks economically nonviable.
+Scott J. Guyton's complete Dynamic BCRA formula has been \textbf{fully implemented}: $CA(t) = \min(C_{\max}(t), C_{base} \times \exp(\prod_{i \in active} g(p_i, E_i)) \times \Pi_{nash}(t))$. This implementation includes all components: individual threat modeling with growth functions $g(p_i, E_i) = 1 + k_1 \times p_i \times (2 - E_i)^{k_2}$, Nash equilibrium game theory with $\Pi_{nash} = w_1\pi_{eq} + w_2\pi_{comp} + w_3\pi_{rep} + w_4\pi_{bayes} + w_5\pi_{signal}$, and comprehensive threat lifecycle management. This extends Jason Lowery's BCRA model by making the cost of attack adaptive rather than static, creating mathematically proven "Intrusion Countermeasure Equations (ICE)" that converge to make attacks economically nonviable.
 
 \end{document}

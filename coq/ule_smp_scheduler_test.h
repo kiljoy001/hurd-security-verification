@@ -100,7 +100,7 @@ typedef struct ule_route_ca {
 
 /* Function prototypes for Dynamic BCRA formula */
 double ule_growth_function(double threat_probability, double defense_effectiveness, double k1, double k2);
-double ule_threat_sum(ule_threat_data_t *threats, uint32_t num_threats);
+double ule_threat_product(ule_threat_data_t *threats, uint32_t num_threats);
 double ule_nash_multiplier(ule_nash_components_t *nash);
 double ule_dynamic_routing_cost(ule_route_ca_t *ca);
 double ule_simple_routing_cost(ule_route_ca_t *ca);

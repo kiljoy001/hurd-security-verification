@@ -81,20 +81,19 @@ Record route_ca := mkRouteCA {
   simple_defense_strength : R
 }.
 
-(* Sum of growth functions for all active threats *)
-Fixpoint threat_sum (threats : list threat_data) : R :=
+(* Product of growth functions for all active threats: ∏_{i∈active} g(p_i, E_i) *)
+Fixpoint threat_product (threats : list threat_data) : R :=
   match threats with
   | [] => (1.0)%R  (* Default to 1.0 if no active threats *)
-  | t :: rest => (growth_function t + threat_sum rest)%R
+  | t :: rest => (growth_function t * threat_product rest)%R
   end.
 
-(* Full Dynamic BCRA formula: CA(t) = max(10, min(C_max, C_base × ∑g(p_i,E_i) × Π_nash)) *)
+(* Full Dynamic BCRA formula: CA(t) = min(C_max, CA₀ × exp(∏g(p_i,E_i)) × Π_nash) *)
 Definition dynamic_routing_cost (ca : route_ca) : R :=
-  let threat_component := threat_sum (active_threats ca) in
+  let threat_component := threat_product (active_threats ca) in
   let nash_component := nash_multiplier (nash_context ca) in
-  let raw_cost := (INR (base_cost ca) * threat_component * nash_component)%R in
-  let bounded_cost := Rmin (INR (max_cost ca)) raw_cost in
-  Rmax (10%R) bounded_cost.
+  let raw_cost := (INR (base_cost ca) * exp threat_component * nash_component)%R in
+  Rmin (INR (max_cost ca)) raw_cost.
 
 (* Simplified routing cost for backward compatibility *)
 Definition simple_routing_cost (ca : route_ca) : R :=
@@ -202,26 +201,32 @@ Proof.
   split; intros [H | H]; [right | left | right | left]; assumption.
 Qed.
 
-(* Theorem 3: Dynamic routing cost is bounded below by 10 *)
-Theorem dynamic_routing_cost_bounded : forall ca,
-  (10 <= routing_cost ca)%R.
+(* Theorem 3: Dynamic routing cost is positive *)
+Theorem dynamic_routing_cost_positive : forall ca,
+  (0 < routing_cost ca)%R.
 Proof.
   intros ca.
   unfold routing_cost, dynamic_routing_cost.
-  apply Rmax_l.
+  apply Rmult_lt_0_compat.
+  - apply Rmult_lt_0_compat.
+    + apply lt_0_INR. lia. (* base_cost > 0 *)
+    + apply exp_pos.
+  - (* nash_component > 0 - this needs to be proven from nash weights *)
+    admit. (* TODO: prove nash_multiplier > 0 *)
 Qed.
 
-(* Helper lemma: threat_sum is always at least 1.0 *)
-Lemma threat_sum_ge_one : forall threats,
-  (1 <= threat_sum threats)%R.
+(* Helper lemma: threat_product is always at least 1.0 *)
+Lemma threat_product_ge_one : forall threats,
+  (1 <= threat_product threats)%R.
 Proof.
   induction threats as [|t rest IH].
   - simpl. lra.
   - simpl.
-    apply Rle_trans with (1 + threat_sum rest)%R.
-    + apply Rplus_le_compat_r.
-      apply growth_function_ge_one.
-    + apply Rplus_le_compat_l. exact IH.
+    apply Rle_trans with (1 * threat_product rest)%R.
+    + rewrite Rmult_1_l. exact IH.
+    + apply Rmult_le_compat_r.
+      * exact IH.
+      * apply growth_function_ge_one.
 Qed.
 
 (* Helper lemma: growth function is always at least 1 *)

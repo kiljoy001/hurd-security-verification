@@ -100,30 +100,30 @@ ule_growth_function(double threat_probability, double defense_effectiveness, dou
 }
 
 /*
- * Sum of growth functions for all active threats: ∑_{i∈active} g(p_i, E_i)
+ * Product of growth functions for all active threats: ∏_{i∈active} g(p_i, E_i)
  * 
  * From Coq specification:
- * Fixpoint threat_sum (threats : list threat_data) : R :=
+ * Fixpoint threat_product (threats : list threat_data) : R :=
  *   match threats with
  *   | [] => (1.0)%R
- *   | t :: rest => (growth_function t + threat_sum rest)%R
+ *   | t :: rest => (growth_function t * threat_product rest)%R
  *   end.
  */
 double 
-ule_threat_sum(ule_threat_data_t *threats, uint32_t num_threats)
+ule_threat_product(ule_threat_data_t *threats, uint32_t num_threats)
 {
     if (num_threats == 0 || threats == NULL) {
         return 1.0;  /* Default to 1.0 if no active threats */
     }
     
-    double sum = 0.0;
+    double product = 1.0;
     for (uint32_t i = 0; i < num_threats; i++) {
-        sum += ule_growth_function(threats[i].threat_probability,
-                                 threats[i].defense_effectiveness,
-                                 ULE_DYNAMIC_BCRA_K1,
-                                 ULE_DYNAMIC_BCRA_K2);
+        product *= ule_growth_function(threats[i].threat_probability,
+                                     threats[i].defense_effectiveness,
+                                     ULE_DYNAMIC_BCRA_K1,
+                                     ULE_DYNAMIC_BCRA_K2);
     }
-    return sum;
+    return product;
 }
 
 /*
@@ -153,15 +153,14 @@ ule_nash_multiplier(ule_nash_components_t *nash)
  * Full Dynamic BCRA formula implementation
  * 
  * Scott J. Guyton's complete Dynamic BCRA formula:
- * CA(t) = max(10, min(C_max, C_base × ∑_{i∈active} g(p_i, E_i) × Π_nash))
+ * CA(t) = min(C_max, C_base × exp(∏_{i∈active} g(p_i, E_i)) × Π_nash)
  * 
  * From Coq specification:
  * Definition dynamic_routing_cost (ca : route_ca) : R :=
- *   let threat_component := threat_sum (active_threats ca) in
+ *   let threat_component := threat_product (active_threats ca) in
  *   let nash_component := nash_multiplier (nash_context ca) in
- *   let raw_cost := (INR (base_cost ca) * threat_component * nash_component)%R in
- *   let bounded_cost := Rmin (INR (max_cost ca)) raw_cost in
- *   Rmax (10.0)%R bounded_cost.
+ *   let raw_cost := (INR (base_cost ca) * exp threat_component * nash_component)%R in
+ *   Rmin (INR (max_cost ca)) raw_cost.
  */
 double 
 ule_dynamic_routing_cost(ule_route_ca_t *ca)
@@ -174,18 +173,17 @@ ule_dynamic_routing_cost(ule_route_ca_t *ca)
         return ca->cached_result;
     }
     
-    /* Calculate threat component: ∑_{i∈active} g(p_i, E_i) */
-    double threat_component = ule_threat_sum(ca->active_threats, ca->num_active_threats);
+    /* Calculate threat component: ∏_{i∈active} g(p_i, E_i) */
+    double threat_component = ule_threat_product(ca->active_threats, ca->num_active_threats);
     
     /* Calculate Nash equilibrium component: Π_nash */
     double nash_component = ule_nash_multiplier(&ca->nash_context);
     
-    /* Calculate raw cost: C_base × ∑g(p_i, E_i) × Π_nash */
-    double raw_cost = (double)ca->base_cost * threat_component * nash_component;
+    /* Calculate raw cost: CA₀ × exp(∏g(p_i, E_i)) × Π_nash */
+    double raw_cost = (double)ca->base_cost * exp(threat_component) * nash_component;
     
-    /* Apply bounds: max(10, min(C_max, raw_cost)) */
-    double bounded_cost = fmin((double)ca->max_cost, raw_cost);
-    double final_cost = fmax(ULE_DYNAMIC_BCRA_MIN_COST, bounded_cost);
+    /* Apply upper bound: min(C_max, raw_cost) */
+    double final_cost = fmin((double)ca->max_cost, raw_cost);
     
     /* Cache the result */
     ca->cached_result = final_cost;
