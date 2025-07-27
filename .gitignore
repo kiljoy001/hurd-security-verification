@@ -60,4 +60,4 @@ temp/
 # ULE scheduler specific
 ule_scheduler_test
 ule_benchmark
-libule_scheduler.a
+libule_scheduler.ahurd-dev/

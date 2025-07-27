@@ -1,0 +1,85 @@
+diff --git a/Makefile.am b/Makefile.am
+index 1234567..abcdefg 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -200,6 +200,14 @@ endif
+ libkernel_a_SOURCES += \
+ 	kern/gsync.c
+ 
++# FSM IPC subsystem
++libkernel_a_SOURCES += \
++	fsm_ipc/fsm_message.c \
++	fsm_ipc/fsm_routing.c \
++	fsm_ipc/fsm_processor.c \
++	fsm_ipc/fsm_ule_integration.c \
++	fsm_ipc/fsm_syscalls.c
++
+ #
+ # `version' is generated at build time.
+ #
+diff --git a/configure.ac b/configure.ac
+index 1234567..abcdefg 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -180,6 +180,14 @@ AC_ARG_ENABLE([device-drivers],
+ 	      [device_drivers=$enableval],
+ 	      [device_drivers=auto])
+ 
++# FSM IPC support
++AC_ARG_ENABLE([fsm-ipc],
++	      [AS_HELP_STRING([--enable-fsm-ipc],
++			      [enable FSM-based IPC system])],
++	      [fsm_ipc=$enableval],
++	      [fsm_ipc=yes])
++AM_CONDITIONAL([FSM_IPC], [test x"$fsm_ipc" = xyes])
++
+ if test x"$device_drivers" != xno; then
+   DEVICE_DRIVER_DEFS='-DMACH_DEVICE_DRIVERS=1'
+ fi
+diff --git a/kern/syscall_sw.c b/kern/syscall_sw.c
+index 1234567..abcdefg 100644
+--- a/kern/syscall_sw.c
++++ b/kern/syscall_sw.c
+@@ -45,6 +45,7 @@
+ #include <kern/ipc_kobject.h>
+ #include <machine/locore.h>
+ #include <ipc/ipc_kmsg.h>
++#include <fsm_ipc/fsm_syscalls.h>
+ 
+ extern kern_return_t syscall_thread_switch(
+ 	mach_port_name_t	thread_name,
+@@ -100,6 +101,12 @@ mach_trap_t	mach_trap_table[MACH_TRAP_TABLE_COUNT] = {
+ 		0, 0,
+ 		(mach_call_t) kern_invalid,	/* 89 */
+ 	},
++	/* FSM IPC syscalls */
++	{	fsm_msg_send_trap, 4, 4,
++		"fsm_msg_send" },			/* 90 */
++	{	fsm_msg_receive_trap, 4, 4,
++		"fsm_msg_receive" },			/* 91 */
++	/* ... continue existing entries ... */
+ };
+ 
+ int	mach_trap_count = (sizeof(mach_trap_table)/sizeof(mach_trap_table[0]));
+diff --git a/include/mach/mach_traps.h b/include/mach/mach_traps.h
+index 1234567..abcdefg 100644
+--- a/include/mach/mach_traps.h
++++ b/include/mach/mach_traps.h
+@@ -75,6 +75,12 @@ extern kern_return_t	syscall_vm_map (
+ 	vm_address_t		*address,
+ 	boolean_t		anywhere);
+ 
++/* FSM IPC system calls */
++extern kern_return_t fsm_msg_send_trap(
++	mach_port_name_t dest_port,
++	vm_address_t msg_addr,
++	mach_msg_size_t msg_size,
++	mach_msg_timeout_t timeout);
++
++extern kern_return_t fsm_msg_receive_trap(
++	mach_port_name_t source_port,
++	vm_address_t msg_addr,
++	mach_msg_size_t max_size,
++	mach_msg_timeout_t timeout);
++
+ #endif	/* _MACH_MACH_TRAPS_H_ */
